@@ -55,3 +55,42 @@ from rivals import CAFES, MENUS_FILE, OUR_CAFE, run_scraper
 #    st.dataframe(menus, hide_index=True)
 #    st.download_button "Download the dataset" with menus.to_csv(index=False),
 #       file_name "menus.csv", mime "text/csv", key "download"
+
+# Heading
+st.title("Salt City: Scrape the Rivals")
+st.markdown("Pick the cafés to scrape. Each run replaces the saved dataset.")
+
+# Pick and scrape
+cafes = st.multiselect("Cafés", options=list(CAFES), default=list(CAFES), key="cafes")
+if st.button("Scrape", key="scrape"):
+    if cafes:
+        with st.spinner("Scraping the cafés..."):
+            result = run_scraper(cafes)
+        if result.returncode == 0:
+            st.success(result.stdout.strip().splitlines()[-1])
+        else:
+            st.error("The scraper failed.")
+            st.code(result.stderr.strip().splitlines()[-1])
+    else:
+        st.warning("Please select at least one café to scrape.")
+
+# Nothing to show yet?
+if not os.path.exists(MENUS_FILE):
+    st.info("No menus yet — scrape at least one café to create the dataset.")
+    st.stop()
+
+# The dataset
+menus = pd.read_csv(MENUS_FILE)
+theirs = menus[menus["cafe"] != OUR_CAFE]
+col1, col2, col3 = st.columns(3)
+col1.metric("Cafés", theirs["cafe"].nunique())
+col2.metric("Items", theirs[["cafe", "item"]].drop_duplicates().shape[0])
+col3.metric("Rows", theirs.shape[0])
+st.dataframe(menus, hide_index=True)
+st.download_button(
+    "Download the dataset",
+    menus.to_csv(index=False),
+    file_name="menus.csv",
+    mime="text/csv",
+    key="download"
+)

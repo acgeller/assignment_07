@@ -36,8 +36,16 @@ def add_canonical(menus: pd.DataFrame, matches: pd.DataFrame) -> pd.DataFrame:
     that (`cafe`, `item`) — missing for items the owner has not reviewed yet.
     Every row of `menus` is kept, in order; `menus` itself is not changed.
     """
-    # TODO: your code here
-    pass
+    merged = menus.merge(
+        matches[["cafe", "item", "matched_to"]],
+        how="left",
+        on=["cafe", "item"],
+    )
+    merged["canonical"] = merged.apply(
+        lambda row: row["item"] if row["cafe"] == OUR_CAFE else row["matched_to"],
+        axis=1
+    )
+    return merged.drop(columns=["matched_to"])
 
 
 def price_table(menus: pd.DataFrame) -> pd.DataFrame:
@@ -69,8 +77,16 @@ def price_position(ours: float, low: float, average: float, high: float) -> str:
 
     Check them in that order: with one rival, low, average and high are the same.
     """
-    # TODO: your code here
-    pass
+    if ours < low:
+        return BELOW_ALL
+    elif ours > high:
+        return ABOVE_ALL
+    elif ours < average:
+        return BELOW_AVERAGE
+    elif ours > average:
+        return ABOVE_AVERAGE
+    else:
+        return AT_AVERAGE
 
 
 def compare_prices(prices: pd.DataFrame) -> pd.DataFrame:
@@ -92,8 +108,29 @@ def compare_prices(prices: pd.DataFrame) -> pd.DataFrame:
 
     Plain index.
     """
-    # TODO: your code here
-    pass
+    rival_prices = prices.drop(columns=OUR_CAFE)
+    rival_columns = rival_prices.columns
+    has_rival_price = rival_prices.notna().any(axis=1)
+    has_our_price = prices[OUR_CAFE].notna()
+    filtered_prices = prices.loc[has_our_price & has_rival_price]
+
+    result = filtered_prices.rename(columns={OUR_CAFE: "our_price"}).reindex(
+        columns=["our_price", *rival_columns]
+    ).copy()
+    result["rival_avg"] = rival_prices.loc[filtered_prices.index].mean(
+        axis=1
+    ).round(2)
+    result['our_position'] = result.apply(
+        lambda row: price_position(
+            row['our_price'],
+            row[rival_columns].min(skipna=True),
+            row['rival_avg'],
+            row[rival_columns].max(skipna=True)
+        ),
+        axis=1
+    )
+
+    return result.reset_index()
 
 
 def gap_analysis(menus: pd.DataFrame) -> pd.DataFrame:
@@ -112,5 +149,52 @@ def gap_analysis(menus: pd.DataFrame) -> pd.DataFrame:
     Sorted by `where` ("only them" first, then "only us", then "both"), then
     `rivals` (most first), then `canonical`; plain index.
     """
-    # TODO: your code here
-    pass
+    # Filter out rival rows with no canonical name
+    filtered_menus = menus.dropna(subset=['canonical'])
+
+    # Separate our items and rivals' items
+    our_items = filtered_menus[filtered_menus["cafe"] == OUR_CAFE][
+        ["canonical", "kind"]
+    ].drop_duplicates()
+    rival_items = filtered_menus[filtered_menus["cafe"] != OUR_CAFE][
+        ["canonical", "kind", "cafe"]
+    ].drop_duplicates()
+
+    # Count how many different rivals sell each item and get their names
+    rival_counts = rival_items.groupby(['canonical', 'kind']).agg(
+        rivals=('cafe', 'nunique'),
+        sold_by=('cafe', lambda x: ', '.join(sorted(x.unique())))
+    ).reset_index()
+
+    # Merge our items with rivals' items to determine where each item is sold
+    merged = pd.merge(
+        our_items,
+        rival_counts,
+        on=["canonical", "kind"],
+        how="outer",
+        indicator=True,
+    )
+
+    # Determine the 'where' column based on the merge indicator
+    merged['where'] = merged['_merge'].map({
+        'left_only': 'only us',
+        'right_only': 'only them',
+        'both': 'both'
+    })
+
+    # Fill NaN values for rivals and sold_by for items only we sell
+    merged['rivals'] = merged['rivals'].fillna(0).astype(int)
+    merged['sold_by'] = merged['sold_by'].fillna('')
+
+    # Select the required columns and sort as specified
+    result = merged[['canonical', 'kind', 'where', 'rivals', 'sold_by']]
+    result["_where_order"] = result["where"].map(
+        {"only them": 0, "only us": 1, "both": 2}
+    ).astype(int)
+    result.sort_values(
+        by=["_where_order", "rivals", "canonical"],
+        ascending=[True, False, True],
+        inplace=True,
+    )
+
+    return result.drop(columns="_where_order").reset_index(drop=True)
